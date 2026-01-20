@@ -775,7 +775,10 @@
           stateIcon.style.color = lightOn ? YELLOW : "var(--primary-text-color)";
         }
 
-        // Click handling (direct listeners per button - more reliable in HA shadow/drag contexts)
+        // Click handling (robust in HA/iOS/overlays)
+        // Why: some installs can block pointer events on the <button> elements (or retarget events)
+        // which makes per-button listeners appear "dead". We therefore listen on the row (capture)
+        // and resolve the intended action from the composed event path.
         const _blurAll = () => {
           try {
             row.querySelectorAll("button").forEach((b) => b.blur?.());
@@ -785,69 +788,93 @@
           } catch (_) {}
         };
 
-        const _onMoreInfo = (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          _blurAll();
-          this._openMoreInfo(entityId);
-        };
-
-        const _onName = (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          _blurAll();
-
-          // Optional HA native action (we only support navigate here)
-          const ta = it?.tap_action;
-          if (ta && typeof ta === "object") {
-            const a = String(ta.action || "").toLowerCase();
-            if (a === "navigate") {
-              const p = String(ta.navigation_path || "").trim();
-              if (p) {
-                this._navigate(p);
-                return;
-              }
+        const _resolveActionFromEvent = (ev) => {
+          const path = (typeof ev.composedPath === "function") ? ev.composedPath() : [];
+          for (const el of path) {
+            if (!el) continue;
+            // Prefer explicit data-action on any element in the path
+            const act = el.getAttribute?.("data-action");
+            if (act) return { action: act, el };
+            // Or a button that contains a data-action
+            if (el.tagName === "BUTTON") {
+              const a2 = el.getAttribute?.("data-action");
+              if (a2) return { action: a2, el };
             }
           }
-
-          // Backward-compatible behavior (unchanged)
-          const path = (it?.navigation_path || "").trim();
-          if (path) this._navigate(path);
-          else this._openMoreInfo(entityId);
+          // Fallback to closest() for browsers that don't expose the composed path
+          const btn = ev.target?.closest?.("button[data-action]");
+          const act = btn?.getAttribute?.("data-action");
+          return act ? { action: act, el: btn } : null;
         };
 
-        const _onOn = (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
+        const _handleAction = (action, ev) => {
+          ev?.preventDefault?.();
+          ev?.stopPropagation?.();
           _blurAll();
 
-          if (it?.on_action && typeof it.on_action === "object") {
-            this._runUiAction(it.on_action, entityId);
-          } else {
-            // Home Assistant frontend expects entity_id in the service data.
-            // Using { target: { entity_id } } here results in a no-op on many installs.
-            this._hass?.callService("light", "turn_on", { entity_id: entityId });
+          if (action === "more-info") {
+            this._openMoreInfo(entityId);
+            return;
+          }
+
+          if (action === "name") {
+            // Optional HA native action (we only support navigate here)
+            const ta = it?.tap_action;
+            if (ta && typeof ta === "object") {
+              const a = String(ta.action || "").toLowerCase();
+              if (a === "navigate") {
+                const p = String(ta.navigation_path || "").trim();
+                if (p) {
+                  this._navigate(p);
+                  return;
+                }
+              }
+            }
+
+            // Backward-compatible behavior (unchanged)
+            const path = (it?.navigation_path || "").trim();
+            if (path) this._navigate(path);
+            else this._openMoreInfo(entityId);
+            return;
+          }
+
+          if (action === "on") {
+            if (it?.on_action && typeof it.on_action === "object") {
+              this._runUiAction(it.on_action, entityId);
+            } else {
+              this._hass?.callService("light", "turn_on", { entity_id: entityId });
+            }
+            return;
+          }
+
+          if (action === "off") {
+            if (it?.off_action && typeof it.off_action === "object") {
+              this._runUiAction(it.off_action, entityId);
+            } else {
+              this._hass?.callService("light", "turn_off", { entity_id: entityId });
+            }
+            return;
           }
         };
 
-        const _onOff = (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          _blurAll();
+        // 1) Capture on the row (works even if buttons don't receive pointer events)
+        row.addEventListener(
+          "click",
+          (ev) => {
+            const info = _resolveActionFromEvent(ev);
+            if (!info) return;
+            _handleAction(info.action, ev);
+          },
+          { capture: true }
+        );
 
-          if (it?.off_action && typeof it.off_action === "object") {
-            this._runUiAction(it.off_action, entityId);
-          } else {
-            this._hass?.callService("light", "turn_off", { entity_id: entityId });
-          }
-        };
+        // 2) Also bind directly to the buttons (fast path when possible)
+        row.querySelector('button[data-action="more-info"]')?.addEventListener("click", (ev) => _handleAction("more-info", ev));
+        row.querySelector('button[data-action="name"]')?.addEventListener("click", (ev) => _handleAction("name", ev));
+        row.querySelector('button[data-action="on"]')?.addEventListener("click", (ev) => _handleAction("on", ev));
+        row.querySelector('button[data-action="off"]')?.addEventListener("click", (ev) => _handleAction("off", ev));
 
-        row.querySelector('button[data-action="more-info"]')?.addEventListener("click", _onMoreInfo);
-        row.querySelector('button[data-action="name"]')?.addEventListener("click", _onName);
-        row.querySelector('button[data-action="on"]')?.addEventListener("click", _onOn);
-        row.querySelector('button[data-action="off"]')?.addEventListener("click", _onOff);
-
-        list.appendChild(row);
+list.appendChild(row);
       });
 
       // --- TOTAL height mode: calibrate using real ha-card padding + borders -----
