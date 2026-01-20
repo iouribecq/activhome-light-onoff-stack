@@ -31,8 +31,8 @@
 // Notes:
 // - ON/OFF are always active.
 // - If on_action/off_action is not provided, defaults are:
-//     ON  => light.turn_on  entity_id = item.entity
-//     OFF => light.turn_off entity_id = item.entity
+//     ON  => homeassistant.turn_on  entity_id = item.entity
+//     OFF => homeassistant.turn_off entity_id = item.entity
 
 (() => {
   const YELLOW = "#FFCC00";
@@ -443,9 +443,24 @@
       if (dot <= 0) return;
       const domain = s.slice(0, dot);
       const srv = s.slice(dot + 1);
-      const payload = { ...(data || {}) };
-      if (target && typeof target === "object") payload.target = target;
-      this._hass?.callService(domain, srv, payload);
+
+      const payload = data && typeof data === "object" ? { ...data } : {};
+
+      // Home Assistant frontend expects `target` as a separate 4th argument in many installs.
+      // Passing `payload.target = {...}` can be ignored, resulting in a no-op.
+      try {
+        if (target && typeof target === "object") {
+          this._hass?.callService(domain, srv, payload, target);
+        } else {
+          this._hass?.callService(domain, srv, payload);
+        }
+      } catch (e) {
+        // Best-effort fallback for older frontends
+        if (target && typeof target === "object") payload.target = target;
+        try {
+          this._hass?.callService(domain, srv, payload);
+        } catch (_) {}
+      }
     }
 
     _runUiAction(uiAction, fallbackEntityId) {
@@ -842,7 +857,7 @@
             if (it?.on_action && typeof it.on_action === "object") {
               this._runUiAction(it.on_action, entityId);
             } else {
-              this._hass?.callService("light", "turn_on", { entity_id: entityId });
+              this._hass?.callService("homeassistant", "turn_on", { entity_id: entityId });
             }
             return;
           }
@@ -851,7 +866,7 @@
             if (it?.off_action && typeof it.off_action === "object") {
               this._runUiAction(it.off_action, entityId);
             } else {
-              this._hass?.callService("light", "turn_off", { entity_id: entityId });
+              this._hass?.callService("homeassistant", "turn_off", { entity_id: entityId });
             }
             return;
           }
