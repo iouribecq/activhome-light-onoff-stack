@@ -31,8 +31,8 @@
 // Notes:
 // - ON/OFF are always active.
 // - If on_action/off_action is not provided, defaults are:
-//     ON  => light.turn_on  target.entity_id = item.entity
-//     OFF => light.turn_off target.entity_id = item.entity
+//     ON  => light.turn_on  entity_id = item.entity
+//     OFF => light.turn_off entity_id = item.entity
 
 (() => {
   const YELLOW = "#FFCC00";
@@ -819,7 +819,9 @@
             if (it?.on_action && typeof it.on_action === "object") {
               this._runUiAction(it.on_action, entityId);
             } else {
-              this._hass?.callService("light", "turn_on", { target: { entity_id: entityId } });
+              // Home Assistant frontend expects entity_id in the service data.
+              // Using { target: { entity_id } } here results in a no-op on many installs.
+              this._hass?.callService("light", "turn_on", { entity_id: entityId });
             }
             return;
           }
@@ -828,7 +830,7 @@
             if (it?.off_action && typeof it.off_action === "object") {
               this._runUiAction(it.off_action, entityId);
             } else {
-              this._hass?.callService("light", "turn_off", { target: { entity_id: entityId } });
+              this._hass?.callService("light", "turn_off", { entity_id: entityId });
             }
             return;
           }
