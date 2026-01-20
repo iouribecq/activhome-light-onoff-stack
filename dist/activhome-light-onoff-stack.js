@@ -775,66 +775,77 @@
           stateIcon.style.color = lightOn ? YELLOW : "var(--primary-text-color)";
         }
 
-        // Click handling
-        row.addEventListener("click", (ev) => {
-          const btn = ev.target?.closest?.("button");
-          if (!btn) return;
-
-          // ✅ iOS: empêche le focus implicite (source de micro-scroll)
+        // Click handling (direct listeners per button - more reliable in HA shadow/drag contexts)
+        const _blurAll = () => {
           try {
-            btn.blur?.();
+            row.querySelectorAll("button").forEach((b) => b.blur?.());
           } catch (_) {}
           try {
             this.shadowRoot?.activeElement?.blur?.();
           } catch (_) {}
+        };
 
-          const action = btn.getAttribute("data-action");
-          if (action === "more-info") {
-            this._openMoreInfo(entityId);
-            return;
-          }
+        const _onMoreInfo = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          _blurAll();
+          this._openMoreInfo(entityId);
+        };
 
-          if (action === "name") {
-            // Optional HA native action (we only support navigate here)
-            const ta = it?.tap_action;
-            if (ta && typeof ta === "object") {
-              const a = String(ta.action || "").toLowerCase();
-              if (a === "navigate") {
-                const p = String(ta.navigation_path || "").trim();
-                if (p) {
-                  this._navigate(p);
-                  return;
-                }
+        const _onName = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          _blurAll();
+
+          // Optional HA native action (we only support navigate here)
+          const ta = it?.tap_action;
+          if (ta && typeof ta === "object") {
+            const a = String(ta.action || "").toLowerCase();
+            if (a === "navigate") {
+              const p = String(ta.navigation_path || "").trim();
+              if (p) {
+                this._navigate(p);
+                return;
               }
             }
-
-            // Backward-compatible behavior (unchanged)
-            const path = (it?.navigation_path || "").trim();
-            if (path) this._navigate(path);
-            else this._openMoreInfo(entityId);
-            return;
           }
 
-          if (action === "on") {
-            if (it?.on_action && typeof it.on_action === "object") {
-              this._runUiAction(it.on_action, entityId);
-            } else {
-              // Home Assistant frontend expects entity_id in the service data.
-              // Using { target: { entity_id } } here results in a no-op on many installs.
-              this._hass?.callService("light", "turn_on", { entity_id: entityId });
-            }
-            return;
-          }
+          // Backward-compatible behavior (unchanged)
+          const path = (it?.navigation_path || "").trim();
+          if (path) this._navigate(path);
+          else this._openMoreInfo(entityId);
+        };
 
-          if (action === "off") {
-            if (it?.off_action && typeof it.off_action === "object") {
-              this._runUiAction(it.off_action, entityId);
-            } else {
-              this._hass?.callService("light", "turn_off", { entity_id: entityId });
-            }
-            return;
+        const _onOn = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          _blurAll();
+
+          if (it?.on_action && typeof it.on_action === "object") {
+            this._runUiAction(it.on_action, entityId);
+          } else {
+            // Home Assistant frontend expects entity_id in the service data.
+            // Using { target: { entity_id } } here results in a no-op on many installs.
+            this._hass?.callService("light", "turn_on", { entity_id: entityId });
           }
-        });
+        };
+
+        const _onOff = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          _blurAll();
+
+          if (it?.off_action && typeof it.off_action === "object") {
+            this._runUiAction(it.off_action, entityId);
+          } else {
+            this._hass?.callService("light", "turn_off", { entity_id: entityId });
+          }
+        };
+
+        row.querySelector('button[data-action="more-info"]')?.addEventListener("click", _onMoreInfo);
+        row.querySelector('button[data-action="name"]')?.addEventListener("click", _onName);
+        row.querySelector('button[data-action="on"]')?.addEventListener("click", _onOn);
+        row.querySelector('button[data-action="off"]')?.addEventListener("click", _onOff);
 
         list.appendChild(row);
       });
