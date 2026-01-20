@@ -31,8 +31,8 @@
 // Notes:
 // - ON/OFF are always active.
 // - If on_action/off_action is not provided, defaults are:
-//     ON  => homeassistant.turn_on  entity_id = item.entity
-//     OFF => homeassistant.turn_off entity_id = item.entity
+//     ON  => light.turn_on  entity_id = item.entity
+//     OFF => light.turn_off entity_id = item.entity
 
 (() => {
   const YELLOW = "#FFCC00";
@@ -443,22 +443,28 @@
       if (dot <= 0) return;
       const domain = s.slice(0, dot);
       const srv = s.slice(dot + 1);
+      const payload = { ...(data || {}) };
 
-      const payload = data && typeof data === "object" ? { ...data } : {};
+      const hass = this._hass;
+      if (!hass || typeof hass.callService !== "function") return;
 
-      // Home Assistant frontend expects `target` as a separate 4th argument in many installs.
-      // Passing `payload.target = {...}` can be ignored, resulting in a no-op.
+      // Prefer the 4-arg form: callService(domain, service, data, target)
+      // This is the most reliable way to pass `target` in the HA frontend.
       try {
         if (target && typeof target === "object") {
-          this._hass?.callService(domain, srv, payload, target);
+          // Some builds expose callService with 4 args; others ignore extra args but still work.
+          hass.callService(domain, srv, payload, target);
         } else {
-          this._hass?.callService(domain, srv, payload);
+          hass.callService(domain, srv, payload);
         }
-      } catch (e) {
-        // Best-effort fallback for older frontends
-        if (target && typeof target === "object") payload.target = target;
+      } catch (_) {
+        // Fallback: embed target in service data (best effort)
         try {
-          this._hass?.callService(domain, srv, payload);
+          if (target && typeof target === "object") {
+            hass.callService(domain, srv, { ...payload, target });
+          } else {
+            hass.callService(domain, srv, payload);
+          }
         } catch (_) {}
       }
     }
@@ -502,6 +508,20 @@
             : a?.data && typeof a.data === "object"
               ? a.data
               : {};
+        this._callServiceFromString(svc, data, target);
+        return;
+      }
+
+      if (action === "perform-action") {
+        // Newer HA action schema uses `perform_action` instead of `service`
+        // Example:
+        //   action: perform-action
+        //   perform_action: light.turn_on
+        //   target: { entity_id: light.xxx }
+        //   data: {}
+        const svc = String(a?.perform_action || "").trim();
+        const target = a?.target && typeof a.target === "object" ? a.target : undefined;
+        const data = a?.data && typeof a.data === "object" ? a.data : {};
         this._callServiceFromString(svc, data, target);
         return;
       }
@@ -790,43 +810,20 @@
           stateIcon.style.color = lightOn ? YELLOW : "var(--primary-text-color)";
         }
 
-        // Click handling (robust in HA/iOS/overlays)
-        // Why: some installs can block pointer events on the <button> elements (or retarget events)
-        // which makes per-button listeners appear "dead". We therefore listen on the row (capture)
-        // and resolve the intended action from the composed event path.
-        const _blurAll = () => {
+        // Click handling
+        row.addEventListener("click", (ev) => {
+          const btn = ev.target?.closest?.("button");
+          if (!btn) return;
+
+          // ✅ iOS: empêche le focus implicite (source de micro-scroll)
           try {
-            row.querySelectorAll("button").forEach((b) => b.blur?.());
+            btn.blur?.();
           } catch (_) {}
           try {
             this.shadowRoot?.activeElement?.blur?.();
           } catch (_) {}
-        };
 
-        const _resolveActionFromEvent = (ev) => {
-          const path = (typeof ev.composedPath === "function") ? ev.composedPath() : [];
-          for (const el of path) {
-            if (!el) continue;
-            // Prefer explicit data-action on any element in the path
-            const act = el.getAttribute?.("data-action");
-            if (act) return { action: act, el };
-            // Or a button that contains a data-action
-            if (el.tagName === "BUTTON") {
-              const a2 = el.getAttribute?.("data-action");
-              if (a2) return { action: a2, el };
-            }
-          }
-          // Fallback to closest() for browsers that don't expose the composed path
-          const btn = ev.target?.closest?.("button[data-action]");
-          const act = btn?.getAttribute?.("data-action");
-          return act ? { action: act, el: btn } : null;
-        };
-
-        const _handleAction = (action, ev) => {
-          ev?.preventDefault?.();
-          ev?.stopPropagation?.();
-          _blurAll();
-
+          const action = btn.getAttribute("data-action");
           if (action === "more-info") {
             this._openMoreInfo(entityId);
             return;
@@ -857,7 +854,9 @@
             if (it?.on_action && typeof it.on_action === "object") {
               this._runUiAction(it.on_action, entityId);
             } else {
-              this._hass?.callService("homeassistant", "turn_on", { entity_id: entityId });
+              // Home Assistant frontend expects entity_id in the service data.
+              // Using { target: { entity_id } } here results in a no-op on many installs.
+              this._hass?.callService("light", "turn_on", { entity_id: entityId });
             }
             return;
           }
@@ -866,30 +865,13 @@
             if (it?.off_action && typeof it.off_action === "object") {
               this._runUiAction(it.off_action, entityId);
             } else {
-              this._hass?.callService("homeassistant", "turn_off", { entity_id: entityId });
+              this._hass?.callService("light", "turn_off", { entity_id: entityId });
             }
             return;
           }
-        };
+        });
 
-        // 1) Capture on the row (works even if buttons don't receive pointer events)
-        row.addEventListener(
-          "click",
-          (ev) => {
-            const info = _resolveActionFromEvent(ev);
-            if (!info) return;
-            _handleAction(info.action, ev);
-          },
-          { capture: true }
-        );
-
-        // 2) Also bind directly to the buttons (fast path when possible)
-        row.querySelector('button[data-action="more-info"]')?.addEventListener("click", (ev) => _handleAction("more-info", ev));
-        row.querySelector('button[data-action="name"]')?.addEventListener("click", (ev) => _handleAction("name", ev));
-        row.querySelector('button[data-action="on"]')?.addEventListener("click", (ev) => _handleAction("on", ev));
-        row.querySelector('button[data-action="off"]')?.addEventListener("click", (ev) => _handleAction("off", ev));
-
-list.appendChild(row);
+        list.appendChild(row);
       });
 
       // --- TOTAL height mode: calibrate using real ha-card padding + borders -----
