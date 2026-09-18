@@ -1,4 +1,9 @@
-// Activhome Light ON/OFF Stack - v0.1.0 (no-build, dependency-free)
+// Activhome Light ON/OFF Stack - v0.1.6 (no-build, dependency-free)
+//
+// CHANGELOG v0.1.6:
+// - FIX NAVIGATION: les navigations sont désormais déléguées à Home Assistant via hass-action.
+// - FIX NAVIGATION: suppression de history.pushState() afin de préserver l’historique des subviews et la flèche Retour native.
+// - Aucun autre changement du rendu, de l’éditeur, des actions ou du comportement tactile.
 // Type: custom:activhome-light-onoff-stack
 //
 // Base model: activhome-light-stack (v0.2.4)
@@ -432,8 +437,10 @@
 
     _navigate(path) {
       if (!path) return;
-      history.pushState(null, "", path);
-      window.dispatchEvent(new Event("location-changed"));
+      fireEvent(this, "hass-action", {
+        config: { tap_action: { action: "navigate", navigation_path: path } },
+        action: "tap",
+      });
     }
 
     _callServiceFromString(service, data = {}, target = undefined) {
