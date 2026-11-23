@@ -1,4 +1,16 @@
-// Activhome Light ON/OFF Stack - v0.1.6 (no-build, dependency-free)
+// Activhome Light ON/OFF Stack - v0.1.7 (no-build, dependency-free)
+//
+// CHANGELOG v0.1.7:
+// - NOUVEAU: option `icon_action` (niveau carte) pour choisir ce que fait l'icône (ampoule) :
+//     more-info (défaut, comportement inchangé) | none | navigate | toggle
+//   * none     : l'icône ne fait rien.
+//   * navigate : même action que le nom (tap_action navigate / navigation_path).
+//   * toggle   : lance on_action si l'entité est éteinte, off_action si elle est allumée
+//                (mêmes actions que les boutons ON / OFF).
+//   Motif : sur les lignes de groupes, la fenêtre more-info expose l'interrupteur natif
+//   qui allume tout le groupe sans passer par le script d'ambiance.
+// - Option ajoutée dans l'éditeur visuel.
+// - Sans `icon_action`, rien ne change.
 //
 // CHANGELOG v0.1.6:
 // - FIX NAVIGATION: les navigations sont désormais déléguées à Home Assistant via hass-action.
@@ -22,6 +34,9 @@
 //     - navigation_path (optional): /dashboard/0
 //     - tap_action (optional): HA native ui_action (we only use action=navigate + navigation_path)
 //     - font_size (optional): "16px".."24px" (empty => container default)
+//
+//   icon_action (optional): more-info (default) | none | navigate | toggle
+//     - what the icon does, for every row of the card
 //
 //   actions_button_width (optional): number (px) width for ON/OFF buttons
 //   actions_button_border (optional): boolean (default false)
@@ -359,8 +374,12 @@
       const actions_button_width = Number.isFinite(bbw) ? bbw : undefined;
       const actions_button_border = config.actions_button_border === true;
 
+      const ia = String(config.icon_action || "more-info").trim().toLowerCase();
+      const icon_action = ["more-info", "none", "navigate", "toggle"].includes(ia) ? ia : "more-info";
+
       this._config = {
         ...config,
+        icon_action,
         style,
         height_mode,
         row_height: Number.isFinite(row_height) ? row_height : 50,
@@ -830,10 +849,29 @@
             this.shadowRoot?.activeElement?.blur?.();
           } catch (_) {}
 
-          const action = btn.getAttribute("data-action");
+          let action = btn.getAttribute("data-action");
+
+          // v0.1.7: configurable icon behavior
           if (action === "more-info") {
-            this._openMoreInfo(entityId);
-            return;
+            const iconAction = this._config.icon_action || "more-info";
+            if (iconAction === "none") return;
+            if (iconAction === "navigate") {
+              // Same behavior as the name button, but never fall back to more-info
+              const ta = it?.tap_action;
+              const taPath =
+                ta && String(ta.action || "").toLowerCase() === "navigate"
+                  ? String(ta.navigation_path || "").trim()
+                  : "";
+              const p = taPath || (it?.navigation_path || "").trim();
+              if (p) this._navigate(p);
+              return;
+            } else if (iconAction === "toggle") {
+              const isOn = this._hass?.states?.[entityId]?.state === "on";
+              action = isOn ? "off" : "on";
+            } else {
+              this._openMoreInfo(entityId);
+              return;
+            }
           }
 
           if (action === "name") {
@@ -1162,6 +1200,21 @@
           selector: { boolean: {} },
         },
         {
+          name: "icon_action",
+          label: "Action de l'icône (ampoule)",
+          selector: {
+            select: {
+              options: [
+                { label: "Fenêtre more-info (défaut)", value: "more-info" },
+                { label: "Ne rien faire", value: "none" },
+                { label: "Naviguer (comme le nom)", value: "navigate" },
+                { label: "Basculer (action ON / OFF)", value: "toggle" },
+              ],
+              mode: "dropdown",
+            },
+          },
+        },
+        {
           name: "actions_button_width",
           label: "Largeur boutons ON/OFF (px, optionnel)",
           selector: { number: { min: 40, max: 200, step: 1, mode: "box" } },
@@ -1243,6 +1296,8 @@
 
         if (merged.actions_button_border !== true) delete merged.actions_button_border;
 
+        if (!merged.icon_action || merged.icon_action === "more-info") delete merged.icon_action;
+
         if (!merged.style) merged.style = "transparent";
         if (!Array.isArray(merged.items)) merged.items = [];
 
@@ -1286,6 +1341,8 @@
 
       if (clean.actions_button_border !== true) delete clean.actions_button_border;
 
+      if (!clean.icon_action || clean.icon_action === "more-info") delete clean.icon_action;
+
       clean.items = (clean.items || []).map((it) => {
         const out = { ...it };
         ["name", "navigation_path", "tap_action", "font_size"].forEach((k) => {
@@ -1317,6 +1374,7 @@
         actions_button_width:
           Number.isFinite(_toNumber(this._config.actions_button_width)) ? _toNumber(this._config.actions_button_width) : "",
         actions_button_border: this._config.actions_button_border === true,
+        icon_action: this._config.icon_action || "more-info",
 
         card_style: this._config.card_style || "",
         accent_color: this._config.accent_color || "",
